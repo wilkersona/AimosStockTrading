@@ -129,8 +129,7 @@ float get_total_value(struct Buyer buyer, struct Stock* stocks, int stocks_per) 
     float out = buyer.cash;
     for (int i=0; i<TOTAL_STOCKS; i++) {
         // Value of the portfolio if the buyer sold all stocks at their current value
-        // Might eventually include dividend as well
-        out = out + buyer.portfolio[i]*stocks[i+stocks_per].value;
+        out = out + buyer.portfolio[i]*stocks[i+stocks_per].value + stocks[i+stocks_per].value*stocks[i+stocks_per].dividend;
     }
     return out;
 }
