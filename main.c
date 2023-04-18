@@ -211,6 +211,11 @@ void update_stocks(int my_chunk, struct Stock* stocks, int stocks_per) {
     int action[3];
     int flag = 0;
     MPI_Status status;
+    // Save value_m2 and value_m1
+    for (int i=0; i<stocks_per; i++) {
+        stocks[my_chunk + i].value_m2 = stocks[my_chunk + i].value_m1;
+        stocks[my_chunk + i].value_m1 = stocks[my_chunk + i].value;         // USE THIS TO SCALE VOLATILITY
+    }
     // Probe for first message
     MPI_Iprobe(MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &flag, &status);
     while (flag == 1) {
