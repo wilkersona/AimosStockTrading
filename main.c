@@ -9,7 +9,7 @@
 
 struct Buyer {
     int id;
-    int stocks[TOTAL_STOCKS];
+    int portfolio[TOTAL_STOCKS];
     int cash;
     int buy_strat;
     int sell_strat;
@@ -47,7 +47,7 @@ struct Buyer* init_buyers(int rank, int buyers_per) {
         new_buyer.sell_strat = 0;
         new_buyer.commitment = 0;
         for (int j=0; j<TOTAL_STOCKS; j++) {
-            new_buyer.stocks[j] = (j == (rank-1)*buyers_per + i) ? 1 : 0;
+            new_buyer.portfolio[j] = (j == (rank-1)*buyers_per + i) ? 1 : 0;
         }
         out[i] = new_buyer;
     }
@@ -130,7 +130,7 @@ float get_total_value(struct Buyer buyer, struct Stock* stocks, int stocks_per) 
     for (int i=0; i<TOTAL_STOCKS; i++) {
         // Value of the portfolio if the buyer sold all stocks at their current value
         // Might eventually include dividend as well
-        out = out + buyer.stocks[i]*stocks[i+stocks_per].value;
+        out = out + buyer.portfolio[i]*stocks[i+stocks_per].value;
     }
     return out;
 }
@@ -182,15 +182,15 @@ void update_buyers(struct Buyer* buyers, struct Stock* stocks, int buyers_per, i
             // PUT LOGIC HERE TO CHECK STOCK DATA AGAINST STRATEGY
             // IF STOCK PASSES CREATE SEND
             // UPDATE BUYER CASH AND PORTFOLIO
-            // STOCK J IS IN buyer.stock[j] AND stocks[j+stocks_per]
+            // STOCK J IS IN buyer.portfolio[j] AND stocks[j+stocks_per]
             if (i == 0 && j == 0) {
-                buyers[i].stocks[j] = buyers[i].stocks[j] + 2;
+                buyers[i].portfolio[j] = buyers[i].portfolio[j] + 2;
                 action[0] = 1;
                 action[1] = 2;
                 action[2] = index;
                 MPI_Isend(action, 3, MPI_INT, chunk, 0, MPI_COMM_WORLD, &request);
             } else if (i == 1 && j == 1) {
-                buyers[i].stocks[j] = buyers[i].stocks[j] - 1;
+                buyers[i].portfolio[j] = buyers[i].portfolio[j] - 1;
                 action[0] = 0;
                 action[1] = 1;
                 action[2] = index;
@@ -210,7 +210,6 @@ void update_stocks(int my_chunk, struct Stock* stocks, int stocks_per) {
     * stocks_per:           number of stocks per rank
     */
     int action[3];
-    struct Stock current;
     int flag = 0;
     MPI_Status status;
     // Probe for first message
