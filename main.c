@@ -6,11 +6,13 @@
 #define TOTAL_BUYERS 100
 #define TOTAL_STOCKS 10
 #define NUM_T 2
+#define RAND_SEED 42
 
 struct Buyer {
     int id;
     int portfolio[TOTAL_STOCKS];
     int cash;
+    int allowance;
     int buy_strat;
     int sell_strat;
     int commitment;
@@ -37,17 +39,21 @@ struct Buyer* init_buyers(int rank, int buyers_per) {
     * (struct Buyer*):      list of buyers randomly initialized
     */
     struct Buyer* out = (struct Buyer*) calloc(buyers_per, sizeof(struct Buyer)); // Allocate space for list
+    //Init randomness
+    srand(RAND_SEED + rank);
+    
     for (int i=0; i<buyers_per; i++) {
-        // PUT LOGIC TO RANDOMLY INITIALIZE BUYER HERE
-        // CANT BE SEEDED OTHERWISE ALL RANKS WILL HAVE SAME BUYERS
+    	//Logic to create new buyer
         struct Buyer new_buyer;
         new_buyer.id = (rank-1)*buyers_per + i;
-        new_buyer.cash = 100;
-        new_buyer.buy_strat = 0;
-        new_buyer.sell_strat = 0;
-        new_buyer.commitment = 0;
+        new_buyer.cash = 100 + rand()%100;
+        new_buyer.allowance = 5 + rand()%10;
+        new_buyer.buy_strat = rand()%4;		//KEY: 0: Rise, 1: Fall, 2: Peak, 3: Dip
+        new_buyer.sell_strat = rand()%4;
+        new_buyer.commitment = 1 + rand()%100; //Instead of half, full, etc. we can mark this as a percent?
         for (int j=0; j<TOTAL_STOCKS; j++) {
-            new_buyer.portfolio[j] = (j == (rank-1)*buyers_per + i) ? 1 : 0;
+            new_buyer.portfolio[j] = (rand()%5)/4; //20% chance each stock is in portfolio
+            //new_buyer.portfolio[j] = (j == (rank-1)*buyers_per + i) ? 1 : 0;
         }
         out[i] = new_buyer;
     }
@@ -66,14 +72,17 @@ struct Stock* init_stocks(int stocks_per) {
     */
     struct Stock* out = (struct Stock*) calloc(TOTAL_STOCKS + stocks_per, sizeof(struct Stock)); // Allocate space for list
     for (int i=0; i<TOTAL_STOCKS; i++) {
-        // PUT LOGIC TO RANDOMLY INITIALIZE STOCK HERE
+        //Init Randomness
+    	srand(RAND_SEED + i);
+
+    	//Stock variables initialization
         struct Stock new_stock;
         new_stock.id = i;
-        new_stock.value_m2 = 10.0;
-        new_stock.value_m1 = 10.0;
-        new_stock.value = i+1;
-        new_stock.dividend = 0.01;
-        new_stock.volatility = 0.05;
+        new_stock.value_m2 = (50 + rand()%100)/10.0;
+        new_stock.value_m1 = (50 + rand()%100)/10.0;
+        new_stock.value = (50 + rand()%100)/10.0;
+        new_stock.dividend = (5 + rand()%10)/1000.0;
+        new_stock.volatility = (1 + rand()%10)/100.0;
         // Make sure to leave a buffer of <stocks_per> at the front of the list - this is the section the I/O rank "contributes"
         out[i+stocks_per] = new_stock;
     }
