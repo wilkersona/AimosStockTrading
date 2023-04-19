@@ -15,7 +15,7 @@ struct Buyer {
     int allowance;
     int buy_strat;
     int sell_strat;
-    int commitment;
+    float commitment;
 };
 
 struct Stock {
@@ -50,7 +50,7 @@ struct Buyer* init_buyers(int rank, int buyers_per) {
         new_buyer.allowance = 5 + rand()%10;
         new_buyer.buy_strat = rand()%4;		//KEY: 0: Rise, 1: Fall, 2: Peak, 3: Dip
         new_buyer.sell_strat = rand()%4;
-        new_buyer.commitment = 1 + rand()%100; //Instead of half, full, etc. we can mark this as a percent?
+        new_buyer.commitment = (1 + rand()%100)/100.0; //Instead of half, full, etc. we can mark this as a percent?
         for (int j=0; j<TOTAL_STOCKS; j++) {
             new_buyer.portfolio[j] = (rand()%5)/4; //20% chance each stock is in portfolio
             //new_buyer.portfolio[j] = (j == (rank-1)*buyers_per + i) ? 1 : 0;
@@ -181,6 +181,8 @@ void update_buyers(struct Buyer* buyers, struct Stock* stocks, int buyers_per, i
     int index;
     int action[3];      // action[0] = {0, 1} for sell/buy, action[1] = # bought/sold, action[2] = index of stock in chunk
     for (int i=0; i<buyers_per; i++) {
+
+        // BUYING
         for (int j=0; j<TOTAL_STOCKS; j++) {
             // Chunk is the rank that receives the send
             chunk = j / stocks_per + 1;
@@ -191,18 +193,56 @@ void update_buyers(struct Buyer* buyers, struct Stock* stocks, int buyers_per, i
             // IF STOCK PASSES CREATE SEND
             // UPDATE BUYER CASH AND PORTFOLIO
             // STOCK J IS IN buyer.portfolio[j] AND stocks[j+stocks_per]
-            if (i == 0 && j == 0) {
-                buyers[i].portfolio[j] = buyers[i].portfolio[j] + 2;
+
+            // Buying based on buy strategy
+            if((buyers[i].buy_strat == 0 && stocks[j+stocks_per].value >= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 >= stocks[j+stocks_per].value_m2)
+            || (buyers[i].buy_strat == 1 && stocks[j+stocks_per].value <= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 <= stocks[j+stocks_per].value_m2)
+            || (buyers[i].buy_strat == 2 && stocks[j+stocks_per].value <= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 >= stocks[j+stocks_per].value_m2)
+            || (buyers[i].buy_strat == 3 && stocks[j+stocks_per].value >= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 <= stocks[j+stocks_per].value_m2)) { 
+                
                 action[0] = 1;
-                action[1] = 2;
+                action[1] = 0;
+                float original_cash = buyers[i].cash;
+                while (buyers[i].cash >= 0) {
+                    if (buyers[i].cash - stocks[j+stocks_per].value >= original_cash*(1.0-buyers[i].commitment)) {
+                        buyers[i].cash -= stocks[j+stocks_per].value;
+                        buyers[i].portfolio[j]++;
+                        action[1]++;
+                    }
+                    else
+                        break;
+                }
+                
                 action[2] = index;
-                MPI_Isend(action, 3, MPI_INT, chunk, 0, MPI_COMM_WORLD, &request);
-            } else if (i == 1 && j == 1) {
-                buyers[i].portfolio[j] = buyers[i].portfolio[j] - 1;
+                // If any stocks are bought, send the action
+                if (action[1] != 0)
+                    MPI_Isend(action, 3, MPI_INT, chunk, 0, MPI_COMM_WORLD, &request);
+                break;
+            }
+        }
+
+        // SELLING
+        for (int j=0; j<TOTAL_STOCKS; j++) {
+            // Chunk is the rank that receives the send
+            chunk = j / stocks_per + 1;
+            // Index is the position of the stock in the chunk
+            index = j % stocks_per;
+
+            // Selling based on sell strategy
+            if((buyers[i].sell_strat == 0 && stocks[j+stocks_per].value >= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 >= stocks[j+stocks_per].value_m2)
+            || (buyers[i].sell_strat == 1 && stocks[j+stocks_per].value <= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 <= stocks[j+stocks_per].value_m2)
+            || (buyers[i].sell_strat == 2 && stocks[j+stocks_per].value <= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 >= stocks[j+stocks_per].value_m2)
+            || (buyers[i].sell_strat == 3 && stocks[j+stocks_per].value >= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 <= stocks[j+stocks_per].value_m2)) { 
+                
                 action[0] = 0;
-                action[1] = 1;
+                action[1] = (int)(buyers[i].portfolio[j] * buyers[i].commitment); 
+                buyers[i].cash += stocks[j+stocks_per].value*action[1];
+                buyers[i].portfolio[j] -= action[1];
+
                 action[2] = index;
-                MPI_Isend(action, 3, MPI_INT, chunk, 0, MPI_COMM_WORLD, &request);
+                // If any stocks are sold, send the action
+                if (action[1] != 0)
+                    MPI_Isend(action, 3, MPI_INT, chunk, 0, MPI_COMM_WORLD, &request);
             }
         }
     }
@@ -232,9 +272,9 @@ void update_stocks(int my_chunk, struct Stock* stocks, int stocks_per) {
         MPI_Recv(action, 3, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
         // PUT LOGIC HERE TO COMPLETE ACTION BASED ON EVENT
         if (action[0] == 0) { // Sell
-            stocks[my_chunk + action[2]].value--;
+            stocks[my_chunk + action[2]].value -= stocks[my_chunk + action[2]].value_m1*stocks[my_chunk + action[2]].volatility*action[1];
         } else { // Buy
-            stocks[my_chunk + action[2]].value++;
+            stocks[my_chunk + action[2]].value += stocks[my_chunk + action[2]].value_m1*stocks[my_chunk + action[2]].volatility*action[1];
         }
         // Probe for next message
         MPI_Iprobe(MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &flag, &status);
@@ -242,6 +282,12 @@ void update_stocks(int my_chunk, struct Stock* stocks, int stocks_per) {
 }
 
 int main(int argc, char *argv[]) {
+
+    // Initialize clock
+    unsigned long long start_time=clock_now();
+    unsigned long long end_time=clock_now();
+    unsigned long long start_time_IO=clock_now();
+    unsigned long long end_time_IO=clock_now();
 
     // Initialize MPI
     int npes, myrank;
@@ -341,14 +387,17 @@ int main(int argc, char *argv[]) {
 
     // Run simulation
     int t = 0;
+    start_time = clock_now();
+    float total_IO_time = 0;
     while (t < NUM_T) {
+        
         
         if (myrank != 0) {
             // All worker ranks update their buyers and generate their values
             update_buyers(buyers, all_stocks, buyers_per, stocks_per);
             buyer_values = value_chunk(buyer_values, buyers, all_stocks, buyers_per, stocks_per);
         }
-
+        
         // Gathering buyer values serves as a barrier for all ranks
         MPI_Gather(
             myrank == 0 ? MPI_IN_PLACE : buyer_values,
@@ -363,7 +412,10 @@ int main(int argc, char *argv[]) {
 
         if (myrank == 0) {
             // I/O rank saves buyer values while
+            start_time_IO=clock_now();
             save_buyers(all_values, buyers_per);
+            end_time_IO=clock_now();
+            total_IO_time += ((float)(end_time_IO - start_time_IO)) / 512000000;
         } else {
             // worker ranks update their stock chunk
             update_stocks(my_chunk, all_stocks, stocks_per);
@@ -390,10 +442,19 @@ int main(int argc, char *argv[]) {
 
         if (myrank == 0) {
             // I/O rank saves stock data, worker ranks can continue in the loop and start updating their buyers
+            start_time_IO=clock_now();
             save_stocks(all_stocks, stocks_per);
+            end_time_IO=clock_now();
+            total_IO_time += ((float)(end_time_IO - start_time_IO)) / 512000000; 
         }
 
         t++;
+    }
+    end_time = clock_now();
+    float time_in_secs_overall = ((float)(end_time - start_time)) / 512000000;
+    if (myrank == 0) {
+        printf("Overall computation loop took %f seconds\n", time_in_secs_overall);
+        printf("I/O took %f seconds\n", total_IO_time);
     }
 
     // Frees
