@@ -53,6 +53,7 @@ struct Buyer* init_buyers(int rank, int buyers_per) {
     * (struct Buyer*):      list of buyers randomly initialized
     */
     struct Buyer* out = (struct Buyer*) calloc(buyers_per, sizeof(struct Buyer)); // Allocate space for list
+    int non_overlap[3];
     //Init randomness
     srand(RAND_SEED + rank);
     
@@ -63,7 +64,14 @@ struct Buyer* init_buyers(int rank, int buyers_per) {
         new_buyer.cash = 100;
         new_buyer.allowance = 5;
         new_buyer.buy_strat = rand()%4;		//KEY: 0: Rise, 1: Fall, 2: Peak, 3: Dip
-        new_buyer.sell_strat = rand()%4;
+        for (int strat=0; strat<3; strat++) {
+            if (strat >= new_buyer.buy_strat) {
+                non_overlap[strat] = strat + 1;
+            } else {
+                non_overlap[strat] = strat;
+            }
+        }
+        new_buyer.sell_strat = non_overlap[rand()%3];
         new_buyer.commitment = (1 + rand()%100)/100.0; //Instead of half, full, etc. we can mark this as a percent?
         for (int j=0; j<TOTAL_STOCKS; j++) {
             //new_buyer.portfolio[j] = (rand()%5)/4; //20% chance each stock is in portfolio
