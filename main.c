@@ -5,9 +5,9 @@
 #include <string.h>
 #include <math.h>
 
-#define TOTAL_BUYERS 75000
-#define TOTAL_STOCKS 2000
-#define NUM_T 3
+#define TOTAL_BUYERS 100
+#define TOTAL_STOCKS 10
+#define NUM_T 2
 #define RAND_SEED 42
 
 struct Buyer {
@@ -28,6 +28,18 @@ struct Stock {
     float dividend;
     float volatility;
 };
+
+int stock_comparator(const void *v1, const void *v2)
+{
+    const struct Stock *p1 = (struct Stock *) v1;
+    const struct Stock *p2 = (struct Stock *) v2;
+    if (p1->dividend > p2->dividend)
+        return -1;
+    else if (p1->dividend < p2->dividend)
+        return +1;
+    else
+        return 0;
+}
 
 struct Buyer* init_buyers(int rank, int buyers_per) {
     /*
@@ -54,8 +66,9 @@ struct Buyer* init_buyers(int rank, int buyers_per) {
         new_buyer.sell_strat = rand()%4;
         new_buyer.commitment = (1 + rand()%100)/100.0; //Instead of half, full, etc. we can mark this as a percent?
         for (int j=0; j<TOTAL_STOCKS; j++) {
-            new_buyer.portfolio[j] = (rand()%5)/4; //20% chance each stock is in portfolio
+            //new_buyer.portfolio[j] = (rand()%5)/4; //20% chance each stock is in portfolio
             //new_buyer.portfolio[j] = (j == (rank-1)*buyers_per + i) ? 1 : 0;
+            new_buyer.portfolio[j] = 0;
         }
         out[i] = new_buyer;
     }
@@ -89,6 +102,7 @@ struct Stock* init_stocks(int stocks_per) {
         out[i+stocks_per] = new_stock;
     }
     // SORT STOCKS BY DIVIDEND
+    qsort(out+stocks_per, TOTAL_STOCKS, sizeof(struct Stock), stock_comparator);
     return out;
 }
 
@@ -101,29 +115,21 @@ unsigned int save_stocks(struct Stock* stocks, int stocks_per, MPI_File file) {
     * stocks_per:           number of stocks per rank
     *
     * Returns-
-    * (unsigned int):                total number of bytes written
+    * (unsigned int):       total number of bytes written
     */
     MPI_Status status;
     MPI_Offset offset;
-    MPI_File_open(MPI_COMM_SELF, "stocks.csv", MPI_MODE_APPEND | MPI_MODE_WRONLY, MPI_INFO_NULL, &file);
+    MPI_File_open(MPI_COMM_SELF, "stocks", MPI_MODE_APPEND | MPI_MODE_WRONLY, MPI_INFO_NULL, &file);
     MPI_File_get_position(file, &offset);
     MPI_File_seek(file, offset, MPI_SEEK_SET);
-    unsigned int total_size = 2;
-    int val;
-    for (int i=stocks_per; i<TOTAL_STOCKS+stocks_per; i++) {
-        val = (int) stocks[i].value;
-        // Get number of digits before decimal, +2 decimal + 1 for decimal point + 1 for comma
-        total_size += (unsigned int) ((val==0) ? 1 : log10(val)+1) + 2 + 1 + 1;
+    float* values = (float*) calloc(TOTAL_STOCKS, sizeof(float));
+    for (int i=0; i<TOTAL_STOCKS; i++) {
+        values[i] = stocks[i+stocks_per].value;
     }
-    char* buff = (char*) calloc(total_size, sizeof(char));
-    for (int i=stocks_per; i<TOTAL_STOCKS+stocks_per; i++) {
-        sprintf(buff+strlen(buff), "%.2f,", stocks[i].value);
-    }
-    sprintf(buff+strlen(buff), "\n");
-    MPI_File_write(file, buff, strlen(buff), MPI_CHAR, &status);
+    MPI_File_write(file, values, TOTAL_STOCKS, MPI_FLOAT, &status);
     MPI_File_close(&file);
-    free(buff);
-    return total_size;
+    free(values);
+    return TOTAL_STOCKS*sizeof(float);
 }
 
 unsigned int save_buyers(float* values, int buyers_per, MPI_File file) {
@@ -135,29 +141,31 @@ unsigned int save_buyers(float* values, int buyers_per, MPI_File file) {
     * buyers_per:           number of buyers per rank
     *
     * Returns-
-    * (unsigned int):                total number of bytes written
+    * (unsigned int):       total number of bytes written
     */
     MPI_Status status;
     MPI_Offset offset;
-    MPI_File_open(MPI_COMM_SELF, "buyers.csv", MPI_MODE_APPEND | MPI_MODE_WRONLY, MPI_INFO_NULL, &file);
+    MPI_File_open(MPI_COMM_SELF, "buyers", MPI_MODE_APPEND | MPI_MODE_WRONLY, MPI_INFO_NULL, &file);
     MPI_File_get_position(file, &offset);
     MPI_File_seek(file, offset, MPI_SEEK_SET);
-    unsigned int total_size = 2;
-    int val;
-    for (int i=buyers_per; i<TOTAL_BUYERS+buyers_per; i++) {
-        val = (int) values[i];
-        // Get number of digits before decimal, +2 decimal + 1 for decimal point + 1 for comma
-        total_size += (unsigned int ) ((val==0) ? 1 : (log10(val)+1)) + 2 + 1 + 1;
-    }
-    char* buff = (char*) calloc(total_size, sizeof(char));
-    for (int i=buyers_per; i<TOTAL_BUYERS+buyers_per; i++) {
-        sprintf(buff+strlen(buff), "%.2f,", values[i]);
-    }
-    sprintf(buff+strlen(buff), "\n");
-    MPI_File_write(file, buff, strlen(buff), MPI_CHAR, &status);
+    MPI_File_write(file, values+buyers_per, TOTAL_BUYERS, MPI_FLOAT, &status);
     MPI_File_close(&file);
-    free(buff);
-    return total_size;
+    return TOTAL_BUYERS*sizeof(float);
+}
+
+void save_strategies(float* strategies, int buyers_per) {
+    /*
+    * I/O call that saves the buyer strategies, only called once
+    *
+    * Arguments-
+    * strategies:           list of values for all buyers
+    * buyers_per:           number of buyers per rank
+    */
+    MPI_Status status;
+    MPI_File strat_file;
+    MPI_File_open(MPI_COMM_SELF, "strats", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &strat_file);
+    MPI_File_write(strat_file, strategies+buyers_per*3, TOTAL_BUYERS*3, MPI_FLOAT, &status);
+    MPI_File_close(&strat_file);
 }
 
 float get_total_value(struct Buyer buyer, struct Stock* stocks, int stocks_per) {
@@ -175,7 +183,10 @@ float get_total_value(struct Buyer buyer, struct Stock* stocks, int stocks_per) 
     float out = buyer.cash;
     for (int i=0; i<TOTAL_STOCKS; i++) {
         // Value of the portfolio if the buyer sold all stocks at their current value
-        out = out + buyer.portfolio[i]*stocks[i+stocks_per].value + stocks[i+stocks_per].value*stocks[i+stocks_per].dividend;
+        out += buyer.portfolio[i]*stocks[i+stocks_per].value;
+        if (buyer.portfolio[i] > 0) {
+            out += stocks[i+stocks_per].value*stocks[i+stocks_per].dividend;
+        }
     }
     return out;
 }
@@ -220,6 +231,31 @@ void update_buyers(struct Buyer* buyers, struct Stock* stocks, int buyers_per, i
         // Allowance
         buyers[i].cash += buyers[i].allowance;
 
+        // SELLING
+        for (int j=0; j<TOTAL_STOCKS; j++) {
+            // Chunk is the rank that receives the send
+            chunk = j / stocks_per + 1;
+            // Index is the position of the stock in the chunk
+            index = j % stocks_per;
+
+            // Selling based on sell strategy
+            if((buyers[i].sell_strat == 0 && stocks[j+stocks_per].value >= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 >= stocks[j+stocks_per].value_m2)
+            || (buyers[i].sell_strat == 1 && stocks[j+stocks_per].value <= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 <= stocks[j+stocks_per].value_m2)
+            || (buyers[i].sell_strat == 2 && stocks[j+stocks_per].value <= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 >= stocks[j+stocks_per].value_m2)
+            || (buyers[i].sell_strat == 3 && stocks[j+stocks_per].value >= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 <= stocks[j+stocks_per].value_m2)) { 
+                
+                action[0] = 0;
+                action[1] = (int) ceil((buyers[i].portfolio[j] * buyers[i].commitment)); 
+                buyers[i].cash += stocks[j+stocks_per].value*action[1];
+                buyers[i].portfolio[j] -= action[1];
+
+                action[2] = index;
+                // If any stocks are sold, send the action
+                if (action[1] != 0)
+                    MPI_Isend(action, 3, MPI_INT, chunk, 0, MPI_COMM_WORLD, &request);
+            }
+        }
+
         // BUYING
         for (int j=0; j<TOTAL_STOCKS; j++) {
             // Chunk is the rank that receives the send
@@ -227,9 +263,6 @@ void update_buyers(struct Buyer* buyers, struct Stock* stocks, int buyers_per, i
             // Index is the position of the stock in the chunk
             index = j % stocks_per;
 
-            // PUT LOGIC HERE TO CHECK STOCK DATA AGAINST STRATEGY
-            // IF STOCK PASSES CREATE SEND
-            // UPDATE BUYER CASH AND PORTFOLIO
             // STOCK J IS IN buyer.portfolio[j] AND stocks[j+stocks_per]
 
             // Buying based on buy strategy
@@ -256,31 +289,6 @@ void update_buyers(struct Buyer* buyers, struct Stock* stocks, int buyers_per, i
                 if (action[1] != 0)
                     MPI_Isend(action, 3, MPI_INT, chunk, 0, MPI_COMM_WORLD, &request);
                 break;
-            }
-        }
-
-        // SELLING
-        for (int j=0; j<TOTAL_STOCKS; j++) {
-            // Chunk is the rank that receives the send
-            chunk = j / stocks_per + 1;
-            // Index is the position of the stock in the chunk
-            index = j % stocks_per;
-
-            // Selling based on sell strategy
-            if((buyers[i].sell_strat == 0 && stocks[j+stocks_per].value >= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 >= stocks[j+stocks_per].value_m2)
-            || (buyers[i].sell_strat == 1 && stocks[j+stocks_per].value <= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 <= stocks[j+stocks_per].value_m2)
-            || (buyers[i].sell_strat == 2 && stocks[j+stocks_per].value <= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 >= stocks[j+stocks_per].value_m2)
-            || (buyers[i].sell_strat == 3 && stocks[j+stocks_per].value >= stocks[j+stocks_per].value_m1 && stocks[j+stocks_per].value_m1 <= stocks[j+stocks_per].value_m2)) { 
-                
-                action[0] = 0;
-                action[1] = (int)(buyers[i].portfolio[j] * buyers[i].commitment); 
-                buyers[i].cash += stocks[j+stocks_per].value*action[1];
-                buyers[i].portfolio[j] -= action[1];
-
-                action[2] = index;
-                // If any stocks are sold, send the action
-                if (action[1] != 0)
-                    MPI_Isend(action, 3, MPI_INT, chunk, 0, MPI_COMM_WORLD, &request);
             }
         }
     }
@@ -342,8 +350,8 @@ int main(int argc, char *argv[]) {
     MPI_File buyer_file;
     MPI_File stock_file;
     if (myrank == 0) {
-        MPI_File_open(MPI_COMM_SELF, "buyers.csv", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &buyer_file);
-        MPI_File_open(MPI_COMM_SELF, "stocks.csv", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &stock_file);
+        MPI_File_open(MPI_COMM_SELF, "buyers", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &buyer_file);
+        MPI_File_open(MPI_COMM_SELF, "stocks", MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &stock_file);
         MPI_File_close(&buyer_file);
         MPI_File_close(&stock_file);
     }
@@ -385,6 +393,8 @@ int main(int argc, char *argv[]) {
     // Initialize local buyer value chunk and I/O all values
     float* buyer_values;
     float* all_values;
+    float* all_strats;
+    float* local_strats;
     // Initialize local stock chunk and all stocks list
     struct Stock* stock_chunk;
     struct Stock* all_stocks;
@@ -397,6 +407,7 @@ int main(int argc, char *argv[]) {
         stock_chunk = (struct Stock*) calloc(TOTAL_STOCKS, sizeof(struct Stock));
         all_stocks = (struct Stock*) calloc(TOTAL_STOCKS+stocks_per, sizeof(struct Stock));
         buyer_values = (float*) calloc(buyers_per, sizeof(float));
+        local_strats = (float*) calloc(buyers_per*3, sizeof(float));
     }
 
     // Initial stock values need to be broadcasted to all ranks
@@ -411,9 +422,15 @@ int main(int argc, char *argv[]) {
     if (myrank == 0) {
         // I/O rank allocates memory for all buyer values 
         all_values = calloc(TOTAL_BUYERS+buyers_per, sizeof(float));
+        all_strats = calloc((TOTAL_BUYERS+buyers_per)*3, sizeof(float));
     } else {
         // Worker ranks generate their buyers' values
         buyer_values = value_chunk(buyer_values, buyers, all_stocks, buyers_per, stocks_per);
+        for (int i=0; i<buyers_per; i++) {
+            local_strats[i*3] = buyers[i].buy_strat;
+            local_strats[i*3+1] = buyers[i].sell_strat;
+            local_strats[i*3+2] = buyers[i].commitment;
+        }
     }
 
     // Gather initial buyer values to the I/O rank for saving
@@ -428,10 +445,26 @@ int main(int argc, char *argv[]) {
         MPI_COMM_WORLD
     );
 
+    // Gather buyer strategies to the I/O rank
+    MPI_Gather(
+        myrank == 0 ? MPI_IN_PLACE : local_strats,
+        buyers_per*3,
+        MPI_FLOAT,
+        all_strats,
+        buyers_per*3,
+        MPI_FLOAT,
+        0,
+        MPI_COMM_WORLD
+    );
+
     if (myrank == 0) {
         // Save initial buyer values and intial stock values
         save_buyers(all_values, buyers_per, buyer_file);
         save_stocks(all_stocks, stocks_per, stock_file);
+        save_strategies(all_strats, buyers_per);
+        free(all_strats);
+    } else {
+        free(local_strats);
     }
 
     // Determines the starting index of a workers stock chunk, INCLUDES PADDED VALUES FOR RANK 0
@@ -439,6 +472,7 @@ int main(int argc, char *argv[]) {
 
     // Run simulation
     int t = 0;
+    MPI_Barrier(MPI_COMM_WORLD);
     start_time = clock_now();
     float total_IO_time = 0;
     float perceived_IO_time = 0;
@@ -516,7 +550,6 @@ int main(int argc, char *argv[]) {
         printf("I/O took %f seconds\n", total_IO_time);
         printf("Sent %u bytes at a bandwidth of %f bytes per second\n", IO_size, bandwidth);
     } else if (myrank == 1) {
-        printf("Overall computation loop took %f seconds\n", time_in_secs_overall);
         printf("Perceived IO took %f seconds\n", perceived_IO_time);
     }
 
