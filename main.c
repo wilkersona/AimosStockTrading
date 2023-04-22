@@ -5,9 +5,9 @@
 #include <string.h>
 #include <math.h>
 
-#define TOTAL_BUYERS 100
-#define TOTAL_STOCKS 10
-#define NUM_T 2
+#define TOTAL_BUYERS 5000
+#define TOTAL_STOCKS 500
+#define NUM_T 100
 #define RAND_SEED 42
 
 struct Buyer {
@@ -105,7 +105,7 @@ struct Stock* init_stocks(int stocks_per) {
         new_stock.value_m1 = (50 + rand()%100)/10.0;
         new_stock.value = (50 + rand()%100)/10.0;
         new_stock.dividend = (5 + rand()%10)/1000.0;
-        new_stock.volatility = (1 + rand()%10)/100.0;
+        new_stock.volatility = (1 + rand()%10)/1000.0;
         // Make sure to leave a buffer of <stocks_per> at the front of the list - this is the section the I/O rank "contributes"
         out[i+stocks_per] = new_stock;
     }
@@ -280,7 +280,8 @@ void update_buyers(struct Buyer* buyers, struct Stock* stocks, int buyers_per, i
                 action[1] = 0;
                 float original_cash = buyers[i].cash;
                 while (buyers[i].cash >= 0) {
-                    if (buyers[i].cash - stocks[j+stocks_per].value >= original_cash*(1.0-buyers[i].commitment)) {
+                    if (buyers[i].cash - stocks[j+stocks_per].value >= original_cash*(1.0-buyers[i].commitment) &&
+                        buyers[i].portfolio[j] <= 200) {
                         buyers[i].cash -= stocks[j+stocks_per].value;
                         buyers[i].portfolio[j]++;
                         action[1]++;
@@ -323,12 +324,15 @@ void update_stocks(int my_chunk, struct Stock* stocks, int stocks_per) {
         MPI_Recv(action, 3, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
         // PUT LOGIC HERE TO COMPLETE ACTION BASED ON EVENT
         if (action[0] == 0) { // Sell
-            stocks[my_chunk + action[2]].value -= stocks[my_chunk + action[2]].value_m1*stocks[my_chunk + action[2]].volatility*action[1];
-            if (stocks[my_chunk + action[2]].value <= 1) {
+            stocks[my_chunk + action[2]].value -= stocks[my_chunk + action[2]].value_m1*stocks[my_chunk + action[2]].volatility*(log10(action[1])+1);
+            if (stocks[my_chunk + action[2]].value < 1) {
                 stocks[my_chunk + action[2]].value = 1;
             }
         } else { // Buy
-            stocks[my_chunk + action[2]].value += stocks[my_chunk + action[2]].value_m1*stocks[my_chunk + action[2]].volatility*action[1];
+            stocks[my_chunk + action[2]].value += stocks[my_chunk + action[2]].value_m1*stocks[my_chunk + action[2]].volatility*(log10(action[1])+1);
+            if (stocks[my_chunk + action[2]].value > 500) {
+                stocks[my_chunk + action[2]].value = 500;
+            }
         }
         // Probe for next message
         MPI_Iprobe(MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &flag, &status);
